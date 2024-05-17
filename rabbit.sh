@@ -17,3 +17,5 @@ case "$1" in
         echo "Usage: $0 {start|stop|logs}"
         exit 1
 esac
+
+# docker run -d --rm --name rabbitmq -p 5672:5672 -p 15672:15672 -p 61613:61613 rabbitmq-stomp:latest
