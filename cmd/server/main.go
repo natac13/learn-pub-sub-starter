@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 
+	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/routing"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -34,26 +36,79 @@ func main() {
 		os.Exit(1)
 	}
 
-	// create an exchange
-	err = pubsub.PublishJSON(
-		ch,
-		routing.ExchangePerilDirect,
-		routing.PauseKey,
-		routing.PlayingState{
-			IsPaused: true,
-		},
+	err = pubsub.SubscribeGob(
+		conn,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		routing.GameLogSlug+".*",
+		pubsub.SimpleQueueDurable,
+		handlerLogs(),
 	)
+
+	if err != nil {
+		slog.Error("could not declare and bind queue", "error", err)
+		os.Exit(1)
+	}
+
+	// fmt.Println("queue declared and bound", q.Name)
 
 	// wait for ctrl+c
 	shutdownChan := make(chan os.Signal, 1)
 	signal.Notify(shutdownChan, os.Interrupt)
 
+	gamelogic.PrintServerHelp()
+
 	for {
-		select {
-		case <-shutdownChan:
+		words := gamelogic.GetInput()
+		if len(words) == 0 {
+			continue
+		}
+
+		if strings.HasPrefix(words[0], "pause") {
+			fmt.Println("pausing...")
+			err = pubsub.PublishJSON(
+				ch,
+				routing.ExchangePerilDirect,
+				routing.PauseKey,
+				routing.PlayingState{
+					IsPaused: true,
+				},
+			)
+			continue
+		}
+
+		if strings.HasPrefix(words[0], "resume") {
+			fmt.Println("resuming...")
+			err = pubsub.PublishJSON(
+				ch,
+				routing.ExchangePerilDirect,
+				routing.PauseKey,
+				routing.PlayingState{
+					IsPaused: false,
+				},
+			)
+			continue
+		}
+
+		if strings.HasPrefix(words[0], "quit") {
 			fmt.Println("shutting down...")
 			return
 		}
+
+		fmt.Println("unknown command")
+
 	}
 
+}
+func handlerLogs() func(gamelog routing.GameLog) pubsub.Acktype {
+	return func(gamelog routing.GameLog) pubsub.Acktype {
+		defer fmt.Print("> ")
+
+		err := gamelogic.WriteLog(gamelog)
+		if err != nil {
+			fmt.Printf("error writing log: %v\n", err)
+			return pubsub.NackRequeue
+		}
+		return pubsub.Ack
+	}
 }
